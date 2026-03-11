@@ -43,6 +43,10 @@ from .language import set_language
 
 logger = logging.getLogger(__name__)
 
+GOOGLE_ACCOUNTS_URL = "https://accounts.google.com/"
+NOTEBOOKLM_URL = "https://notebooklm.google.com/"
+NOTEBOOKLM_HOST = "notebooklm.google.com"
+
 
 def _sync_server_language_to_config() -> None:
     """Fetch server language setting and persist to local config.
@@ -212,7 +216,7 @@ def register_session_commands(cli):
             )
 
             page = context.pages[0] if context.pages else context.new_page()
-            page.goto("https://notebooklm.google.com/")
+            page.goto(NOTEBOOKLM_URL)
 
             console.print("\n[bold green]Instructions:[/bold green]")
             console.print("1. Complete the Google login in the browser window")
@@ -223,11 +227,11 @@ def register_session_commands(cli):
 
             # Force .google.com cookies for regional users (e.g. UK lands on
             # .google.co.uk). Use "load" not "networkidle" to avoid analytics hangs.
-            page.goto("https://accounts.google.com/", wait_until="load")
-            page.goto("https://notebooklm.google.com/", wait_until="load")
+            page.goto(GOOGLE_ACCOUNTS_URL, wait_until="load")
+            page.goto(NOTEBOOKLM_URL, wait_until="load")
 
             current_url = page.url
-            if "notebooklm.google.com" not in current_url:
+            if NOTEBOOKLM_HOST not in current_url:
                 console.print(f"[yellow]Warning: Current URL is {current_url}[/yellow]")
                 if not click.confirm("Save authentication anyway?"):
                     context.close()
