@@ -128,12 +128,18 @@ def cli(ctx, storage, profile, verbose):
         logging.getLogger("notebooklm").setLevel(logging.INFO)
 
     # Set up profile system
-    from .migration import ensure_profiles_dir
     from .paths import set_active_profile
 
-    ensure_profiles_dir()
     # Always reset to prevent leaking across CliRunner invocations
     set_active_profile(profile)
+
+    # Only set up profiles dir when not using an explicit auth source.
+    # --storage and NOTEBOOKLM_AUTH_JSON bypass the profile system entirely
+    # and must not require a writable NOTEBOOKLM_HOME.
+    if not storage and not os.environ.get("NOTEBOOKLM_AUTH_JSON"):
+        from .migration import ensure_profiles_dir
+
+        ensure_profiles_dir()
 
     ctx.ensure_object(dict)
     ctx.obj["storage_path"] = Path(storage) if storage else None

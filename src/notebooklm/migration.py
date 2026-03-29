@@ -51,9 +51,8 @@ def migrate_to_profiles() -> bool:
     home = get_home_dir()
     profiles_dir = home / "profiles"
 
-    # Already migrated (check marker, not just dir existence — handles partial migrations)
-    marker = profiles_dir / "default" / _MIGRATION_MARKER
-    if profiles_dir.exists() and (marker.exists() or not _has_legacy_files(home)):
+    # Already migrated: profiles dir exists and no legacy files left to clean up
+    if profiles_dir.exists() and not _has_legacy_files(home):
         return False
 
     # Check for legacy files
@@ -88,11 +87,7 @@ def migrate_to_profiles() -> bool:
         shutil.copytree(src, dst)
         logger.debug("Copied %s/ → %s/", src.name, dst)
 
-    # Write marker — all copies succeeded
-    marker = default_dir / _MIGRATION_MARKER
-    marker.write_text("migrated\n", encoding="utf-8")
-
-    # Now safe to remove originals
+    # Remove originals (copies already in place as fallback)
     for src in legacy_files:
         src.unlink()
         logger.debug("Removed legacy %s", src.name)
@@ -103,6 +98,12 @@ def migrate_to_profiles() -> bool:
 
     # Update config.json with default_profile
     _set_default_profile_in_config()
+
+    # Write marker LAST — signals that migration is fully complete.
+    # If the process dies before this point, next run retries (safe because
+    # copies use exist_ok/rmtree and originals may already be gone).
+    marker = default_dir / _MIGRATION_MARKER
+    marker.write_text("migrated\n", encoding="utf-8")
 
     logger.info("Migration complete: legacy files moved to profiles/default/")
     return True
@@ -133,12 +134,12 @@ def ensure_profiles_dir() -> None:
     """Ensure the profiles directory exists, migrating if needed.
 
     This is the single entry point for migration, called from CLI startup.
-    Idempotent — safe to call on every CLI invocation. Also handles partial
-    migrations (profiles dir exists but legacy files remain).
+    Idempotent — safe to call on every CLI invocation. Also handles:
+    - Fresh installs (no profiles dir)
+    - Partial migrations (profiles dir exists but legacy files remain)
+    - Interrupted migrations from older versions (marker + leftover legacy files)
     """
     home = get_home_dir()
     profiles_dir = home / "profiles"
-    if not profiles_dir.exists() or (
-        _has_legacy_files(home) and not (profiles_dir / "default" / _MIGRATION_MARKER).exists()
-    ):
+    if not profiles_dir.exists() or _has_legacy_files(home):
         migrate_to_profiles()

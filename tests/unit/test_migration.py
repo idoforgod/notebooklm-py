@@ -106,6 +106,37 @@ class TestMigrateToProfiles:
         assert (default_dir / "storage_state.json").exists()
         assert not (default_dir / "context.json").exists()
 
+    def test_interrupted_migration_retries(self, tmp_path):
+        """Interrupted migration (marker + leftover legacy files) is retried."""
+        # Simulate crash after marker but before deletion (old buggy order)
+        (tmp_path / "storage_state.json").write_text('{"cookies":[]}')
+        default_dir = tmp_path / "profiles" / "default"
+        default_dir.mkdir(parents=True)
+        (default_dir / "storage_state.json").write_text('{"cookies":[]}')
+        (default_dir / ".migration_complete").write_text("migrated\n")
+        # Legacy file still at root — this simulates a crash
+
+        with patch.dict(os.environ, {"NOTEBOOKLM_HOME": str(tmp_path)}, clear=True):
+            # ensure_profiles_dir should detect leftover legacy files and re-migrate
+            ensure_profiles_dir()
+
+        # Legacy file should now be cleaned up
+        assert not (tmp_path / "storage_state.json").exists()
+        assert (default_dir / "storage_state.json").exists()
+
+    def test_marker_written_after_deletion(self, tmp_path):
+        """Marker is written only after originals are deleted."""
+        (tmp_path / "storage_state.json").write_text('{"cookies":[]}')
+
+        with patch.dict(os.environ, {"NOTEBOOKLM_HOME": str(tmp_path)}, clear=True):
+            migrate_to_profiles()
+
+        default_dir = tmp_path / "profiles" / "default"
+        # Marker exists
+        assert (default_dir / ".migration_complete").exists()
+        # Original removed
+        assert not (tmp_path / "storage_state.json").exists()
+
 
 class TestEnsureProfilesDir:
     def test_creates_on_first_run(self, tmp_path):
@@ -120,3 +151,49 @@ class TestEnsureProfilesDir:
         with patch.dict(os.environ, {"NOTEBOOKLM_HOME": str(tmp_path)}, clear=True):
             ensure_profiles_dir()  # Should not raise
             assert (tmp_path / "profiles").exists()
+
+
+class TestExplicitAuthBypassesProfileSetup:
+    """Verify that --storage and NOTEBOOKLM_AUTH_JSON don't require writable home."""
+
+    def test_storage_flag_skips_profile_setup(self, tmp_path):
+        """CLI with --storage should not call ensure_profiles_dir."""
+        from click.testing import CliRunner
+
+        from notebooklm.notebooklm_cli import cli
+
+        # Make home read-only to prove profiles dir creation is skipped
+        ro_home = tmp_path / "ro_home"
+        ro_home.mkdir(mode=0o500)
+
+        storage_file = tmp_path / "storage.json"
+        storage_file.write_text('{"cookies": []}')
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--storage", str(storage_file), "status", "--paths"],
+            env={"NOTEBOOKLM_HOME": str(ro_home)},
+        )
+        # Should not crash with PermissionError from profiles dir creation
+        assert result.exit_code != 1 or "PermissionError" not in str(result.exception or "")
+
+    def test_auth_json_env_skips_profile_setup(self, tmp_path):
+        """CLI with NOTEBOOKLM_AUTH_JSON should not call ensure_profiles_dir."""
+        from click.testing import CliRunner
+
+        from notebooklm.notebooklm_cli import cli
+
+        ro_home = tmp_path / "ro_home"
+        ro_home.mkdir(mode=0o500)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["status", "--paths"],
+            env={
+                "NOTEBOOKLM_HOME": str(ro_home),
+                "NOTEBOOKLM_AUTH_JSON": '{"cookies": [{"name": "SID", "value": "x", "domain": ".google.com"}]}',
+            },
+        )
+        assert result.exit_code != 1 or "PermissionError" not in str(result.exception or "")
