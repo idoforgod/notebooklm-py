@@ -224,15 +224,22 @@ class ArtifactsAPI:
             await client.artifacts.rename(notebook_id, artifact_id, "New Title")
     """
 
-    def __init__(self, core: ClientCore, notes_api: "NotesAPI"):
+    def __init__(
+        self,
+        core: ClientCore,
+        notes_api: "NotesAPI",
+        storage_path: Path | None = None,
+    ):
         """Initialize the artifacts API.
 
         Args:
             core: The core client infrastructure.
             notes_api: The notes API for accessing notes/mind maps.
+            storage_path: Path to storage state file for loading download cookies.
         """
         self._core = core
         self._notes = notes_api
+        self._storage_path = storage_path
 
     # =========================================================================
     # List/Get Operations
@@ -2039,7 +2046,7 @@ class ArtifactsAPI:
         downloaded: list[str] = []
 
         # Load cookies with domain info for cross-domain redirect handling
-        cookies = load_httpx_cookies()
+        cookies = load_httpx_cookies(path=self._storage_path)
 
         async with httpx.AsyncClient(
             cookies=cookies,
@@ -2048,6 +2055,20 @@ class ArtifactsAPI:
         ) as client:
             for url, output_path in urls_and_paths:
                 try:
+                    # Validate URL scheme and domain before sending auth cookies
+                    parsed = urlparse(url)
+                    if parsed.scheme != "https":
+                        raise ArtifactDownloadError(
+                            "media", details=f"Download URL must use HTTPS: {url[:80]}"
+                        )
+                    trusted = (".google.com", ".googleusercontent.com", ".googleapis.com")
+                    if not any(
+                        parsed.netloc == d.lstrip(".") or parsed.netloc.endswith(d) for d in trusted
+                    ):
+                        raise ArtifactDownloadError(
+                            "media", details=f"Untrusted download domain: {parsed.netloc}"
+                        )
+
                     response = await client.get(url)
                     response.raise_for_status()
 
@@ -2104,7 +2125,7 @@ class ArtifactsAPI:
         temp_file = output_file.with_suffix(output_file.suffix + ".tmp")
 
         # Load cookies with domain info for cross-domain redirect handling
-        cookies = load_httpx_cookies()
+        cookies = load_httpx_cookies(path=self._storage_path)
 
         # Use granular timeouts: 10s to connect, 30s per chunk read/write
         # This allows large files to download without timeout while still

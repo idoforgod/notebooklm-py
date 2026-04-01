@@ -60,8 +60,8 @@ class TestDownloadUrlsBatch:
             mock_client_cls.return_value = mock_client
 
             urls_and_paths = [
-                ("https://example.com/file1.mp4", str(tmp_path / "file1.mp4")),
-                ("https://example.com/file2.mp4", str(tmp_path / "file2.mp4")),
+                ("https://storage.googleapis.com/file1.mp4", str(tmp_path / "file1.mp4")),
+                ("https://storage.googleapis.com/file2.mp4", str(tmp_path / "file2.mp4")),
             ]
 
             result = await api._download_urls_batch(urls_and_paths)
@@ -92,7 +92,7 @@ class TestDownloadUrlsBatch:
             mock_client_cls.return_value = mock_client
 
             urls_and_paths = [
-                ("https://example.com/file.mp4", str(tmp_path / "file.mp4")),
+                ("https://storage.googleapis.com/file.mp4", str(tmp_path / "file.mp4")),
             ]
 
             # HTML response should raise ArtifactDownloadError
@@ -120,8 +120,8 @@ class TestDownloadUrlsBatch:
             mock_client_cls.return_value = mock_client
 
             urls_and_paths = [
-                ("https://example.com/file1.mp4", str(tmp_path / "file1.mp4")),
-                ("https://example.com/file2.mp4", str(tmp_path / "file2.mp4")),
+                ("https://storage.googleapis.com/file1.mp4", str(tmp_path / "file1.mp4")),
+                ("https://storage.googleapis.com/file2.mp4", str(tmp_path / "file2.mp4")),
             ]
 
             result = await api._download_urls_batch(urls_and_paths)

@@ -1,7 +1,7 @@
 # Troubleshooting
 
 **Status:** Active
-**Last Updated:** 2026-03-13
+**Last Updated:** 2026-04-01
 
 Common issues, known limitations, and workarounds for `notebooklm-py`.
 
@@ -282,6 +282,11 @@ notebooklm login
 
 # Or copy a fresh storage_state.json from another machine
 ```
+
+**Custom auth paths:** When using `from_storage(path=...)` or `from_storage(profile="work")`,
+artifact downloads automatically use the same storage path for cookie authentication.
+If you are on an older version where downloads fail with "Storage file not found" pointing
+to the default location, upgrade or set `NOTEBOOKLM_HOME` as a workaround.
 
 ### URL Expiry
 

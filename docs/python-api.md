@@ -175,8 +175,14 @@ class NotebookLMClient:
 
     @classmethod
     async def from_storage(
-        cls, path: str | None = None, timeout: float = 30.0
+        cls, path: str | None = None, timeout: float = 30.0,
+        profile: str | None = None
     ) -> "NotebookLMClient"
+
+    def __init__(
+        self, auth: AuthTokens, timeout: float = 30.0,
+        storage_path: Path | None = None
+    )
 
     async def refresh_auth(self) -> AuthTokens
 ```
@@ -394,6 +400,7 @@ path = await client.artifacts.download_flashcards(nb_id, "cards.md", output_form
 - Mind map downloads return a JSON tree structure with `name` and `children` fields
 - Data table downloads parse the complex rich-text format into CSV rows/columns
 - Quiz/flashcard formats: `json` (structured), `markdown` (readable), `html` (raw)
+- Downloads automatically use the storage path from `from_storage(path=...)` or the resolved profile for cookie authentication
 
 #### Export Methods
 
