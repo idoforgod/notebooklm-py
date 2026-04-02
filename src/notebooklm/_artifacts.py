@@ -1724,7 +1724,10 @@ class ArtifactsAPI:
             task_id: The task/artifact ID to check.
 
         Returns:
-            GenerationStatus with current status.
+            GenerationStatus with current status.  When the artifact is not
+            found in the list, ``status`` is set to ``"not_found"`` so that
+            callers can distinguish "genuinely pending" from "removed by the
+            server" (e.g. after a quota rejection).
         """
         # List all artifacts and find by ID (no poll-by-ID RPC exists)
         artifacts_data = await self._list_raw(notebook_id)
@@ -1748,9 +1751,23 @@ class ArtifactsAPI:
                         status_code = ArtifactStatus.PROCESSING
 
                 status = artifact_status_to_str(status_code)
-                return GenerationStatus(task_id=task_id, status=status)
 
-        return GenerationStatus(task_id=task_id, status="pending")
+                # Extract error details from failed artifacts.
+                # The API may embed an error reason string at art[3] when
+                # the artifact fails (e.g. daily quota exceeded).
+                error_msg: str | None = None
+                if status == "failed":
+                    error_msg = self._extract_artifact_error(art)
+
+                return GenerationStatus(
+                    task_id=task_id,
+                    status=status,
+                    error=error_msg,
+                )
+
+        # Artifact not found in the list.  Use a distinct status so
+        # wait_for_completion can differentiate from genuine "pending".
+        return GenerationStatus(task_id=task_id, status="not_found")
 
     async def wait_for_completion(
         self,
@@ -1760,6 +1777,7 @@ class ArtifactsAPI:
         max_interval: float = 10.0,
         timeout: float = 300.0,
         poll_interval: float | None = None,  # Deprecated, use initial_interval
+        max_not_found: int = 3,
     ) -> GenerationStatus:
         """Wait for a generation task to complete.
 
@@ -1772,6 +1790,11 @@ class ArtifactsAPI:
             max_interval: Maximum seconds between status checks.
             timeout: Maximum seconds to wait.
             poll_interval: Deprecated. Use initial_interval instead.
+            max_not_found: Consecutive "not found" polls before treating
+                the task as failed.  When the API removes an artifact
+                from the list (e.g. after a daily-quota rejection), the
+                poller would otherwise spin until *timeout*.  Defaults
+                to 3 to tolerate brief replication lag.
 
         Returns:
             Final GenerationStatus.
@@ -1792,6 +1815,8 @@ class ArtifactsAPI:
 
         start_time = asyncio.get_running_loop().time()
         current_interval = initial_interval
+        consecutive_not_found = 0
+        last_status: str | None = None
 
         while True:
             status = await self.poll_status(notebook_id, task_id)
@@ -1799,9 +1824,39 @@ class ArtifactsAPI:
             if status.is_complete or status.is_failed:
                 return status
 
+            # Track consecutive "not found" responses.  The API may
+            # remove quota-rejected artifacts from the list entirely
+            # instead of setting them to FAILED.  After several
+            # consecutive not-found responses we treat this as failure.
+            if status.status == "not_found":
+                consecutive_not_found += 1
+                if consecutive_not_found >= max_not_found:
+                    logger.warning(
+                        "Artifact %s disappeared from list after %d consecutive "
+                        "polls — treating as failed (likely quota/limit exceeded)",
+                        task_id,
+                        consecutive_not_found,
+                    )
+                    return GenerationStatus(
+                        task_id=task_id,
+                        status="failed",
+                        error=(
+                            "Generation failed: artifact was removed by the server. "
+                            "This usually means a daily quota or rate limit was exceeded. "
+                            "Try again later."
+                        ),
+                    )
+            else:
+                consecutive_not_found = 0
+
+            last_status = status.status
+
             elapsed = asyncio.get_running_loop().time() - start_time
             if elapsed > timeout:
-                raise TimeoutError(f"Task {task_id} timed out after {timeout}s")
+                raise TimeoutError(
+                    f"Task {task_id} timed out after {timeout}s "
+                    f"(last status: {last_status})"
+                )
 
             # Clamp sleep duration to respect timeout
             remaining_time = timeout - elapsed
@@ -2202,6 +2257,43 @@ class ArtifactsAPI:
         return GenerationStatus(
             task_id="", status="failed", error="Generation failed - no artifact_id returned"
         )
+
+    @staticmethod
+    def _extract_artifact_error(art: builtins.list[Any]) -> str | None:
+        """Try to extract a human-readable error from a failed artifact.
+
+        Google's batchexecute responses embed error information in varying
+        positions depending on the artifact type.  This method walks through
+        known locations and returns the first non-empty string it finds.
+
+        Known error locations (reverse-engineered):
+        - art[3]: Sometimes contains an error reason string.
+        - art[5]: May contain a nested error payload similar to the
+          UserDisplayableError structure in RPC responses.
+
+        Args:
+            art: Raw artifact data from ``_list_raw()``.
+
+        Returns:
+            A human-readable error string, or ``None`` if no error detail
+            could be extracted.
+        """
+        # art[3] — simple string error reason
+        if len(art) > 3 and isinstance(art[3], str) and art[3].strip():
+            return art[3].strip()
+
+        # art[5] — nested structure that may contain error text
+        if len(art) > 5 and isinstance(art[5], list):
+            # Walk the list looking for the first non-empty string
+            for item in art[5]:
+                if isinstance(item, str) and item.strip():
+                    return item.strip()
+                if isinstance(item, list):
+                    for sub in item:
+                        if isinstance(sub, str) and sub.strip():
+                            return sub.strip()
+
+        return None
 
     def _get_artifact_type_name(self, artifact_type: int) -> str:
         """Get human-readable name for an artifact type.

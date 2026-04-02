@@ -250,8 +250,13 @@ class TestWaitForCompletion:
         assert result.status == "completed"
 
     @pytest.mark.asyncio
-    async def test_poll_returns_pending_when_artifact_not_found(self, mock_artifacts_api):
-        """Test poll_status returns pending when artifact ID not in list."""
+    async def test_poll_returns_not_found_when_artifact_not_in_list(self, mock_artifacts_api):
+        """Test poll_status returns not_found when artifact ID not in list.
+
+        Previously this returned status='pending', but 'not_found' is now
+        the correct value so that wait_for_completion can distinguish a
+        brief propagation lag from a quota-removed artifact.
+        """
         api, mock_core = mock_artifacts_api
 
         # LIST_ARTIFACTS returns list without our artifact ID
@@ -269,7 +274,8 @@ class TestWaitForCompletion:
 
         result = await api.poll_status("nb_123", "task_123")
 
-        assert result.status == "pending"
+        assert result.status == "not_found"
+        assert result.is_not_found is True
         assert result.task_id == "task_123"
 
 
